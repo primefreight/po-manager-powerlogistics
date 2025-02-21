@@ -4,6 +4,7 @@
   "type": "module",
   "main": "main.js",
   "dependencies": {
+    "apify": "^3.3.2",
     "axios": "^1.7.9",
     "body-parser": "^1.20.3",
     "dotenv": "^16.4.7",
