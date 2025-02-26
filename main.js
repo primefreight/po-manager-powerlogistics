@@ -5,7 +5,7 @@ import {
     addStyleNumber,
     updatePurchaseOrder,
     updateStyleNumber,
-  } from './api.service.js';
+  } from "./api.service.js";
   
   /**
    * Process a single shipment record using the combined field format.
@@ -23,9 +23,14 @@ import {
    *   5. Build two payloads:
    *        • One with key "selectedPOs" for updating purchase orders.
    *        • One with key "purchaseOrder" for updating style numbers.
-   *   6. Call both updatePurchaseOrder and updateStyleNumber.
+   *   6. Call both updatePurchaseOrder and updateStyleNumber for the shipment.
+   *   7. If a booking_id is provided in the record, build similar payloads (with type "booking")
+   *      and update the booking as well.
    */
   async function processRecord(record) {
+    // Log the entire record to verify its structure.
+    console.log("Processing record:", record);
+  
     const shipmentID = record.shipmentID;
     const shipperId = parseInt(record.shipper_id, 10);
     const customerId = parseInt(record.customer_id, 10);
@@ -35,11 +40,13 @@ import {
     let currentPO = null;
   
     if (record.purchase_orders_and_styles) {
-      const tokens = record.purchase_orders_and_styles.split(",").map(token => token.trim());
+      const tokens = record.purchase_orders_and_styles
+        .split(",")
+        .map((token) => token.trim());
       for (const token of tokens) {
         if (token.includes("-")) {
           // Token format: "PO - SN"
-          const [poRaw, snRaw] = token.split("-").map(str => str.trim());
+          const [poRaw, snRaw] = token.split("-").map((str) => str.trim());
           if (poRaw && snRaw) {
             currentPO = poRaw;
             if (!poMap[currentPO]) {
@@ -113,7 +120,6 @@ import {
       for (const sn of uniqueSNs) {
         try {
           console.log(`Checking existence for style number "${sn}" for PO "${poRecord.orderNumber}" and shipment ${shipmentID}`);
-          // Use checkStyleNumberExistence instead of the old quickAddSNs.
           const snResult = await checkStyleNumberExistence(sn, poRecord.orderNumber, shipmentID);
           if (snResult[0] && snResult[1] && snResult[1].totalCount > 0) {
             console.log(`Style number "${sn}" found (ID: ${snResult[1].results[0].id}).`);
@@ -147,7 +153,7 @@ import {
       processedPOs.push(poRecord);
     }
     
-    // Build payload for updating purchase orders.
+    // Build payload for updating purchase orders for shipment.
     const finalPOPayload = {
       type: "shipment",
       id: shipmentID,
@@ -157,7 +163,7 @@ import {
       }))
     };
     
-    // Build payload for updating style numbers.
+    // Build payload for updating style numbers for shipment.
     const finalSNPayload = {
       type: "shipment",
       id: shipmentID,
@@ -167,10 +173,10 @@ import {
       }))
     };
     
-    console.log("Final payload to update purchase orders:", JSON.stringify(finalPOPayload, null, 2));
-    console.log("Final payload to update style numbers:", JSON.stringify(finalSNPayload, null, 2));
+    console.log("Final payload to update shipment purchase orders:", JSON.stringify(finalPOPayload, null, 2));
+    console.log("Final payload to update shipment style numbers:", JSON.stringify(finalSNPayload, null, 2));
     
-    // Call the endpoint to update purchase orders.
+    // Call the endpoint to update purchase orders for shipment.
     try {
       const poUpdateResult = await updatePurchaseOrder(finalPOPayload);
       if (poUpdateResult[0]) {
@@ -182,7 +188,7 @@ import {
       console.error(`Error updating purchase orders for shipment ${shipmentID}:`, err);
     }
     
-    // Call the endpoint to update style numbers.
+    // Call the endpoint to update style numbers for shipment.
     try {
       const snUpdateResult = await updateStyleNumber(finalSNPayload);
       if (snUpdateResult[0]) {
@@ -193,8 +199,61 @@ import {
     } catch (err) {
       console.error(`Error updating style numbers for shipment ${shipmentID}:`, err);
     }
+    
+    // --- Additional: Update the booking record if booking_id is provided ---
+    if (record.booking_id) {
+      const bookingID = record.booking_id;
+      console.log(`Booking record detected with booking_id ${bookingID}. Preparing booking update payloads...`);
+      
+      // Build payload for updating purchase orders for booking.
+      const finalBookingPOPayload = {
+        type: "booking",
+        id: bookingID,
+        selectedPOs: processedPOs.map(po => ({
+          id: po.id,
+          selectedSN: po.styleNumbers.map(sn => ({ id: sn.id }))
+        }))
+      };
+      
+      // Build payload for updating style numbers for booking.
+      const finalBookingSNPayload = {
+        type: "booking",
+        id: bookingID,
+        purchaseOrder: processedPOs.map(po => ({
+          id: po.id,
+          selectedSN: po.styleNumbers.map(sn => ({ id: sn.id }))
+        }))
+      };
+      
+      console.log("Final payload to update booking purchase orders:", JSON.stringify(finalBookingPOPayload, null, 2));
+      console.log("Final payload to update booking style numbers:", JSON.stringify(finalBookingSNPayload, null, 2));
+      
+      // Call the endpoint to update purchase orders for booking.
+      try {
+        const bookingPOUpdateResult = await updatePurchaseOrder(finalBookingPOPayload);
+        if (bookingPOUpdateResult[0]) {
+          console.log(`Update of purchase orders successful for booking ${bookingID}`);
+        } else {
+          console.error(`Update of purchase orders failed for booking ${bookingID}: ${bookingPOUpdateResult[1]}`);
+        }
+      } catch (err) {
+        console.error(`Error updating purchase orders for booking ${bookingID}:`, err);
+      }
+      
+      // Call the endpoint to update style numbers for booking.
+      try {
+        const bookingSNUpdateResult = await updateStyleNumber(finalBookingSNPayload);
+        if (bookingSNUpdateResult[0]) {
+          console.log(`Update of style numbers successful for booking ${bookingID}`);
+        } else {
+          console.error(`Update of style numbers failed for booking ${bookingID}: ${bookingSNUpdateResult[1]}`);
+        }
+      } catch (err) {
+        console.error(`Error updating style numbers for booking ${bookingID}:`, err);
+      }
+    }
   }
-  
+    
   // Export the processPayloads function so it can be used in the webhook server.
   export async function processPayloads(payloads) {
     for (const record of payloads) {
